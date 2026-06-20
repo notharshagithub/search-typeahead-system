@@ -66,19 +66,19 @@ graph TD
     end
 
     %% Read Flow (Blue)
-    UI -->|1. GET /suggest (Read)| Backend
-    Backend -->|2a. MD5 Hash Routing| Caching
-    Caching -.->|2b. Cache Miss| Backend
-    Backend -->|3. Query Fallback| DB
-    DB -.->|4. Results| Backend
-    Backend -.->|5. Async Fire-and-Forget Populate| Caching
+    UI -->|"1. GET /suggest (Read)"| Backend
+    Backend -->|"2a. MD5 Hash Routing"| Caching
+    Caching -.->|"2b. Cache Miss"| Backend
+    Backend -->|"3. Query Fallback"| DB
+    DB -.->|"4. Results"| Backend
+    Backend -.->|"5. Async Fire-and-Forget Populate"| Caching
 
     %% Write Flow (Red)
-    UI ==>|A. POST /search (Write)| Batcher
-    Batcher ==>|B. Bulk Upsert flush every 5s| DB
+    UI ==>|"A. POST /search (Write)"| Batcher
+    Batcher ==>|"B. Bulk Upsert flush every 5s"| DB
 
     %% Trending Flow (Green)
-    UI -->|GET /trending| Batcher
+    UI -->|"GET /trending"| Batcher
 
     %% Styling
     style UI fill:#61dafb,stroke:#333,stroke-width:2px,color:#000

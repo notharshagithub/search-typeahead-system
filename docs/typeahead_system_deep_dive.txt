@@ -1,0 +1,111 @@
+================================================================================
+              TYPEAHEAD SYSTEM: IN-DEPTH TECHNICAL DEEP DIVE
+================================================================================
+
+TABLE OF CONTENTS
+--------------------------------------------------------------------------------
+1.  Introduction
+2.  Frontend Implementation Details (React & Debouncing)
+3.  Backend Orchestration (Express)
+4.  Database Architecture (SQLite, Indexes, WAL)
+5.  Data Ingestion Algorithm (JSON, Bulk Upserts)
+6.  Consistent Hashing Implementation (MD5, Binary Search)
+7.  Distributed Caching Strategy (Maps, Fetch, AbortController)
+8.  Write Batching Implementation (In-memory Buffers, Timers)
+9.  Real-Time Trending Algorithm (Sliding Windows)
+10. Infrastructure & Docker Networking
+
+================================================================================
+1. INTRODUCTION
+================================================================================
+This document is a deeply technical breakdown of the Typeahead System. It goes beyond the high-level concepts and explains exactly HOW features were implemented at the code level, including the specific algorithms, standard libraries, and NPM packages used.
+
+================================================================================
+2. FRONTEND IMPLEMENTATION DETAILS (REACT & DEBOUNCING)
+================================================================================
+* Framework: React.js bundled with Vite (`npm create vite@latest`).
+* Network Requests: Used the native browser `fetch` API to communicate with the backend.
+* Debouncing Implementation:
+  - We did NOT use external libraries like Lodash for debouncing.
+  - We built a custom React Hook: `useDebounce(value, delay)`.
+  - How it works: It uses React's `useEffect` and JavaScript's native `setTimeout`. When the user types a keystroke, the hook triggers a `setTimeout` for 300ms. If the user types another keystroke before 300ms finishes, the `useEffect` cleanup function runs `clearTimeout()`, destroying the old timer and starting a brand new 300ms timer.
+  - Result: The network request only fires when the user stops typing for a full 300ms.
+
+================================================================================
+3. BACKEND ORCHESTRATION (EXPRESS)
+================================================================================
+* Framework: Node.js with `express` framework.
+* Middleware:
+  - `cors`: Allowed the React app (running on port 5173) to bypass Cross-Origin Resource Sharing security to hit the backend (port 3001).
+  - `express.json()`: Automatically parses incoming POST request bodies into JSON objects.
+  - `morgan`: Used for structured HTTP request logging in the console.
+
+================================================================================
+4. DATABASE ARCHITECTURE (SQLITE, INDEXES, WAL)
+================================================================================
+* Library: `better-sqlite3`. We chose this over standard `sqlite3` because it is completely synchronous, highly performant, and does not require messy Promise wrappers.
+* Schema: 
+  `CREATE TABLE IF NOT EXISTS queries (query TEXT PRIMARY KEY, count INTEGER, last_searched_at DATETIME, recent_count INTEGER)`
+* Indexing Implementation:
+  - Command: `CREATE INDEX IF NOT EXISTS idx_query_prefix ON queries(query);`
+  - How it works: SQLite implements this as a B-Tree (Balanced Tree). When the backend runs `SELECT * FROM queries WHERE query LIKE 'ip%'`, SQLite does not do a linear scan. It traverses the B-Tree in O(log N) time to find the exact starting pointer for "ip" and stops scanning the moment the alphabetical characters go past "ip".
+* WAL Mode Implementation:
+  - Command: `db.pragma('journal_mode = WAL');`
+  - How it works: Normally, SQLite locks the entire database file when writing, blocking all reads. Write-Ahead Logging (WAL) writes changes to a separate `-wal` file first. This allows readers to continue reading from the main `.db` file simultaneously without being locked out.
+
+================================================================================
+5. CONSISTENT HASHING IMPLEMENTATION (MD5, BINARY SEARCH)
+================================================================================
+* Problem: Standard modulo hashing (`hash(key) % 3_nodes`) breaks completely if a node crashes, causing 100% of the cache to shuffle.
+* Implementation: Custom Consistent Hash Ring (`backend/src/cache/hashRing.js`). No external hashing libraries were used; we used Node's native `crypto` module.
+* Algorithm Step-by-Step:
+  1. Virtual Nodes: For each of the 3 physical cache nodes, we generated 150 "virtual" node names (e.g., `cache-node-1-vnode-1`, `cache-node-1-vnode-2`, etc.).
+  2. Hashing: We hashed each virtual node name using Node's `crypto.createHash('md5')`, taking the first 4 bytes of the hex string and parsing it into a 32-bit Integer using `parseInt(hex, 16)`.
+  3. The Ring: We stored these integers in a sorted array called `ringKeys`. We also maintained a `Map` linking the Integer back to the physical node name (`cache-node-1`).
+  4. Lookup (Binary Search): When a user searches for "iphone", we hash the string "iphone" using the exact same MD5 logic to get an Integer.
+  5. We then use a custom `bisectLeft` (Binary Search) algorithm to find the first Integer in the `ringKeys` array that is larger than the "iphone" Integer. This takes O(log N) time.
+  6. We look up that Integer in the `Map` to get the target node (e.g., `cache-node-2`).
+
+================================================================================
+6. DISTRIBUTED CACHING STRATEGY (MAPS, FETCH, ABORT CONTROLLER)
+================================================================================
+* Cache Nodes (`cache-node/src/server.js`):
+  - They are simple Express servers. 
+  - The actual storage mechanism is a native JavaScript `Map` object: `const cache = new Map();`
+  - Expiration (TTL): When an item is stored, we calculate `expiresAt = Date.now() + (ttl * 1000)`. When reading, if `Date.now() > expiresAt`, the node actively deletes the key and returns a 404 Cache Miss.
+* Backend Fetching:
+  - The backend communicates with cache nodes using the native Node 18 `fetch` API.
+  - Fault Tolerance: We used `AbortSignal.timeout(100)`. If the cache node takes longer than 100 milliseconds to respond (or is completely dead), the `fetch` throws an AbortError. The backend catches this, ignores the cache, and instantly falls back to querying SQLite.
+
+================================================================================
+7. WRITE BATCHING IMPLEMENTATION (IN-MEMORY BUFFERS, TIMERS)
+================================================================================
+* Problem: Too many `POST /search` requests locking the database.
+* Implementation (`backend/src/store/batchQueue.js`):
+  - Buffer: We created a global `Map` called `currentBatch`.
+  - When a user searches "docker", we do: `currentBatch.set("docker", (currentBatch.get("docker") || 0) + 1);`
+  - Timer: We run `setInterval(flushBatch, 5000)`.
+  - Flush Logic: Every 5 seconds, `flushBatch()` copies the `currentBatch` Map, clears the original Map, and passes the copied Map to the database layer.
+  - SQLite Upsert: The database converts the Map into an array of objects. It runs a single database `transaction` containing an `INSERT ... ON CONFLICT(query) DO UPDATE SET count = count + excluded.count`. This is highly optimized and writes thousands of increments in milliseconds.
+
+================================================================================
+8. REAL-TIME TRENDING ALGORITHM (SLIDING WINDOWS)
+================================================================================
+* How do we get trending queries without asking the database?
+* Implementation:
+  - In `batchQueue.js`, we maintain an array: `slidingWindow = []`.
+  - Every 5 seconds (when the flush runs), we push the flushed batch into `slidingWindow`.
+  - We strictly enforce the size: `if (slidingWindow.length > 10) slidingWindow.shift();`. This guarantees the window only ever holds the last 50 seconds of data.
+  - Read Path: When `GET /trending` is called, we iterate through the `slidingWindow` array of Maps, summing up all the counts into a single master Map. We convert that master Map to an array, run standard JavaScript `Array.prototype.sort((a,b) => b.count - a.count)`, and `.slice(0, 10)` to return the top 10. Time Complexity: O(W * K + K log K) where W is window size (10) and K is unique queries. Extremely fast.
+
+================================================================================
+9. INFRASTRUCTURE & DOCKER NETWORKING
+================================================================================
+* Implementation: `docker-compose.yml`.
+* Network: We defined a custom bridge network `typeahead-net`.
+* Internal DNS: Docker provides internal DNS resolution. The backend does not connect to the cache nodes via IP addresses. It literally fetches `http://cache-node-1:3002`. Docker's internal DNS dynamically resolves the hostname `cache-node-1` to the correct container IP.
+* Volumes: The SQLite database sits at `/app/data/typeahead.db` inside the container. We mapped `./data:/app/data` so that the file is actually physically written to the host computer's hard drive, ensuring data survives container restarts.
+
+================================================================================
+END OF IN-DEPTH TECHNICAL DEEP DIVE
+================================================================================

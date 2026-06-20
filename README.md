@@ -27,6 +27,9 @@ To ensure this system is tested against real-world data, it is powered by **Amaz
 - **Source:** This is a public research dataset officially released by Amazon Science. You can find the original repository here: [Amazon ESCI GitHub](https://github.com/amazon-science/esci-data).
 - **Scale:** The dataset contains over **130,000 real customer search queries**, originally collected from live Amazon search traffic to aid in product search and ranking research.
 
+### Data Cleaning & Preparation
+Before being loaded into the system, the raw dataset was processed via a custom Jupyter Notebook (`dataset/data_cleaning.ipynb`). The raw queries were stripped of noise, normalized, and each query was programmatically assigned a **randomized initial search count**. This simulated a "pre-warmed" production database with varied query popularities, allowing our autocomplete algorithm to immediately demonstrate realistic, weighted ranking logic rather than uniformly sorted data.
+
 ### Loading Instructions: Fully Automated
 You do **not** need to run any manual database seeding scripts. 
 

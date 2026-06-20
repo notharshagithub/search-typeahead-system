@@ -47,22 +47,22 @@ Because we use an `ON CONFLICT DO UPDATE` SQL command wrapped in a single transa
 ```mermaid
 graph TD
     subgraph Client [Client Tier]
-        UI[React Frontend SPA\n(Debounces Keystrokes)]
+        UI["React Frontend SPA<br/>(Debounces Keystrokes)"]
     end
 
     subgraph Gateway [API Gateway / Coordination Tier]
-        Backend[Node.js / Express Backend Server\n(Routing & Hash Ring Logic)]
-        Batcher[In-Memory Write Batcher\n(5-second Sliding Window)]
+        Backend["Node.js / Express Backend Server<br/>(Routing & Hash Ring Logic)"]
+        Batcher["In-Memory Write Batcher<br/>(5-second Sliding Window)"]
     end
 
     subgraph Caching [Distributed In-Memory Cache Tier]
-        Cache1[(Cache Node 1\nExpress + Native JS Map)]
-        Cache2[(Cache Node 2\nExpress + Native JS Map)]
-        Cache3[(Cache Node 3\nExpress + Native JS Map)]
+        Cache1[("Cache Node 1<br/>Express + Native JS Map")]
+        Cache2[("Cache Node 2<br/>Express + Native JS Map")]
+        Cache3[("Cache Node 3<br/>Express + Native JS Map")]
     end
 
     subgraph Persistence [Persistent Storage Tier]
-        DB[(SQLite Database\nWAL Mode + B-Tree Index)]
+        DB[("SQLite Database<br/>WAL Mode + B-Tree Index")]
     end
 
     %% Read Flow (Blue)
